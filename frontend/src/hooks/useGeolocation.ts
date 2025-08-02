@@ -1,45 +1,102 @@
 import { useState, useEffect } from 'react';
-import { GeolocationCoords, GeolocationError } from '../types';
 
-export const useGeolocation = (options?: PositionOptions) => {
-  const [location, setLocation] = useState<GeolocationCoords | null>(null);
-  const [error, setError] = useState<GeolocationError | null>(null);
-  const [loading, setLoading] = useState(false);
+interface GeolocationState {
+  latitude: number | null;
+  longitude: number | null;
+  accuracy: number | null;
+  error: string | null;
+  loading: boolean;
+}
 
-  const getCurrentLocation = () => {
+interface GeolocationOptions {
+  enableHighAccuracy?: boolean;
+  timeout?: number;
+  maximumAge?: number;
+}
+
+export const useGeolocation = (options: GeolocationOptions = {}) => {
+  const [state, setState] = useState<GeolocationState>({
+    latitude: null,
+    longitude: null,
+    accuracy: null,
+    error: null,
+    loading: true,
+  });
+
+  useEffect(() => {
     if (!navigator.geolocation) {
-      setError({ code: 0, message: 'Geolocation is not supported' });
+      setState(prev => ({
+        ...prev,
+        error: 'Geolocation is not supported by this browser.',
+        loading: false,
+      }));
       return;
     }
 
-    setLoading(true);
-    setError(null);
-
-    navigator.geolocation.getCurrentPosition(
+    const watchId = navigator.geolocation.watchPosition(
       (position) => {
-        setLocation({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-          accuracy: position.coords.accuracy
+        setState({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          error: null,
+          loading: false,
         });
-        setLoading(false);
       },
       (error) => {
-        setError({ code: error.code, message: error.message });
-        setLoading(false);
+        let errorMessage = 'An unknown error occurred.';
+        
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            errorMessage = 'Location access denied by user.';
+            break;
+          case error.POSITION_UNAVAILABLE:
+            errorMessage = 'Location information is unavailable.';
+            break;
+          case error.TIMEOUT:
+            errorMessage = 'Location request timed out.';
+            break;
+        }
+
+        setState(prev => ({
+          ...prev,
+          error: errorMessage,
+          loading: false,
+        }));
       },
       {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 300000,
-        ...options
+        enableHighAccuracy: options.enableHighAccuracy ?? true,
+        timeout: options.timeout ?? 15000,
+        maximumAge: options.maximumAge ?? 10000,
       }
     );
+
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, [options.enableHighAccuracy, options.timeout, options.maximumAge]);
+
+  const getCurrentPosition = (): Promise<GeolocationPosition> => {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject(new Error('Geolocation is not supported by this browser.'));
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        resolve,
+        reject,
+        {
+          enableHighAccuracy: options.enableHighAccuracy ?? true,
+          timeout: options.timeout ?? 15000,
+          maximumAge: options.maximumAge ?? 10000,
+        }
+      );
+    });
   };
 
-  useEffect(() => {
-    getCurrentLocation();
-  }, []);
-
-  return { location, error, loading, getCurrentLocation };
+  return {
+    ...state,
+    getCurrentPosition,
+  };
 };
